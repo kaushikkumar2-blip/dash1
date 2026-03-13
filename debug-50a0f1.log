@@ -1,0 +1,12 @@
+{"sessionId":"50a0f1","runId":"post-fix","message":"display_cols unique","data":{"columns":['seller_type', 'PHin', 'ZRTO %', 'Breach %', 'FAC %', 'Conv %'],"unique":True}}
+{"sessionId":"50a0f1","runId":"post-fix","message":"display_cols unique","data":{"columns":['seller_type', 'PHin', 'ZRTO %', 'Breach %', 'FAC %', 'Conv %'],"unique":True}}
+{"sessionId":"50a0f1","runId":"post-fix","message":"display_cols unique","data":{"columns":['seller_type', 'PHin', 'ZRTO %', 'Breach %', 'FAC %', 'Conv %'],"unique":True}}
+{"sessionId":"50a0f1","runId":"post-fix","message":"display_cols unique","data":{"columns":['seller_type', 'PHin', 'Breach %', 'FAC %', 'ZRTO %', 'Conv %'],"unique":True}}
+{"sessionId":"50a0f1","runId":"post-fix","message":"display_cols unique","data":{"columns":['seller_type', 'PHin', 'ZRTO %', 'Breach %', 'FAC %', 'Conv %'],"unique":True}}
+{"sessionId":"50a0f1","runId":"post-fix","message":"display_cols unique","data":{"columns":['seller_type', 'PHin', 'ZRTO %', 'Breach %', 'FAC %', 'Conv %'],"unique":True}}
+{"sessionId":"50a0f1","hypothesisId":"H1","message":"growth metric col","data":{"m":'Breach %',"col":'Breach %',"col_in_df":True}}
+{"sessionId":"50a0f1","hypothesisId":"H1","message":"growth metric col","data":{"m":'ZRTO %',"col":'ZRTO %',"col_in_df":True}}
+{"sessionId":"50a0f1","hypothesisId":"H1","message":"growth metric col","data":{"m":'FAC %',"col":'FAC %',"col_in_df":True}}
+{"sessionId":"50a0f1","hypothesisId":"H1","message":"growth metric col","data":{"m":'Conv %',"col":'Conv %',"col_in_df":True}}
+{"sessionId":"50a0f1","hypothesisId":"H1","message":"growth metric col","data":{"m":'Volume',"col":'PHin',"col_in_df":True}}
+{"sessionId":"50a0f1","hypothesisId":"H1","message":"growth metric col","data":{"m":'Delivered',"col":'conv_num',"col_in_df":True}}
