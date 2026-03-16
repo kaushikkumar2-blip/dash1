@@ -13,7 +13,6 @@ Requirements:
 
 import streamlit as st
 import pandas as pd
-import plotly.graph_objects as go
 import numpy as np
 from datetime import datetime
 
@@ -101,21 +100,22 @@ def safe_div(num, den, scale=100):
     return (num / den * scale) if den else 0
 
 
-def calculate_summary_metrics(df: pd.DataFrame) -> dict:
-    if df.empty:
+@st.cache_data
+def calculate_summary_metrics(_df: pd.DataFrame) -> dict:
+    if _df.empty:
         return {}
-    tv  = df["PHin"].sum()
-    cod = df[df["payment_type_norm"] == "COD"]
-    pp  = df[df["payment_type_norm"] == "Prepaid"]
+    tv  = _df["PHin"].sum()
+    cod = _df[_df["payment_type_norm"] == "COD"]
+    pp  = _df[_df["payment_type_norm"] == "Prepaid"]
     cv, pv = cod["PHin"].sum(), pp["PHin"].sum()
-    td  = df["conv_num"].sum()
+    td  = _df["conv_num"].sum()
     pd_ = pp["conv_num"].sum()
     cd  = cod["conv_num"].sum()
-    fn  = df["First_attempt_delivered"].sum()
-    fd  = df["fac_deno"].sum()
-    bn  = df["Breach_Num"].sum()
-    bd  = df["Breach_Den"].sum()
-    zn  = df["zero_attempt_num"].sum()
+    fn  = _df["First_attempt_delivered"].sum()
+    fd  = _df["fac_deno"].sum()
+    bn  = _df["Breach_Num"].sum()
+    bd  = _df["Breach_Den"].sum()
+    zn  = _df["zero_attempt_num"].sum()
     return {
         "Volume":               tv,
         "COD Volume":           cv,
@@ -198,6 +198,95 @@ def build_daily_table(df: pd.DataFrame) -> pd.DataFrame:
     return daily.fillna(0).sort_values("reporting_date")
 
 
+@st.cache_data
+def build_rank_agg(_daily_df: pd.DataFrame) -> pd.DataFrame:
+    rank_agg = _daily_df.groupby("seller_type").agg(
+        PHin=("PHin", "sum"),
+        zero_attempt_num=("zero_attempt_num", "sum"),
+        First_attempt_delivered=("First_attempt_delivered", "sum"),
+        fac_deno=("fac_deno", "sum"),
+        Breach_Num=("Breach_Num", "sum"),
+        Breach_Den=("Breach_Den", "sum"),
+        conv_num=("conv_num", "sum"),
+    ).reset_index()
+    rank_agg = rank_agg[rank_agg["PHin"] >= 1000].copy()
+    nan = float("nan")
+    rank_agg["ZRTO %"] = (rank_agg["zero_attempt_num"] / rank_agg["PHin"].replace(0, nan) * 100).round(2)
+    rank_agg["FAC %"] = (rank_agg["First_attempt_delivered"] / rank_agg["fac_deno"].replace(0, nan) * 100).round(2)
+    rank_agg["Breach %"] = (rank_agg["Breach_Num"] / rank_agg["Breach_Den"].replace(0, nan) * 100).round(2)
+    rank_agg["Conv %"] = (rank_agg["conv_num"] / rank_agg["PHin"].replace(0, nan) * 100).round(2)
+    return rank_agg.fillna(0)
+
+
+@st.cache_data
+def build_daily_comparison(_daily_df: pd.DataFrame, _dates: list, mode: str) -> pd.DataFrame:
+    """Build the N↑/M↓ comparison table. Cached to avoid recomputation on every rerun."""
+    _metric_to_col = {"Volume": "PHin", "Delivered": "conv_num"}
+    row_metrics = ["ZRTO %", "FAC %", "Breach %", "Conv %"]
+    risk_flags = [True, False, True, False]
+    nan = float("nan")
+
+    if mode == "Day wise compare":
+        periods = _dates
+        source_df = _daily_df
+        period_col = "reporting_date"
+    else:
+        df_copy = _daily_df.copy()
+        df_copy["_dt"] = df_copy["reporting_date"].apply(
+            lambda s: datetime.strptime(str(s), "%Y%m%d") if len(str(s)) == 8 else datetime.now()
+        )
+        if mode == "Weekly compare":
+            df_copy["_period"] = df_copy["_dt"].apply(lambda d: d.strftime("%Y-W%W"))
+        else:
+            df_copy["_period"] = df_copy["_dt"].apply(lambda d: d.strftime("%Y-%m"))
+        source_df = (
+            df_copy.groupby(["_period", "seller_type"])
+            .agg(PHin=("PHin", "sum"), conv_num=("conv_num", "sum"),
+                 zero_attempt_num=("zero_attempt_num", "sum"),
+                 First_attempt_delivered=("First_attempt_delivered", "sum"),
+                 fac_deno=("fac_deno", "sum"), Breach_Num=("Breach_Num", "sum"),
+                 Breach_Den=("Breach_Den", "sum"))
+            .reset_index()
+        )
+        source_df["ZRTO %"] = (source_df["zero_attempt_num"] / source_df["PHin"].replace(0, nan) * 100).round(2)
+        source_df["FAC %"] = (source_df["First_attempt_delivered"] / source_df["fac_deno"].replace(0, nan) * 100).round(2)
+        source_df["Breach %"] = (source_df["Breach_Num"] / source_df["Breach_Den"].replace(0, nan) * 100).round(2)
+        source_df["Conv %"] = (source_df["conv_num"] / source_df["PHin"].replace(0, nan) * 100).round(2)
+        source_df = source_df.fillna(0)
+        periods = sorted(source_df["_period"].unique())
+        period_col = "_period"
+
+    table_data = {}
+    for m, is_risk in zip(row_metrics, risk_flags):
+        col = _metric_to_col.get(m, m)
+        row_cells = []
+        for i, p in enumerate(periods):
+            if i == 0:
+                row_cells.append("—")
+                continue
+            prev_p = periods[i - 1]
+            curr = source_df[source_df[period_col] == p][["seller_type", col]].rename(columns={col: "v"})
+            prev = source_df[source_df[period_col] == prev_p][["seller_type", col]].rename(columns={col: "v_prev"})
+            merged = curr.merge(prev, on="seller_type", how="inner")
+            if is_risk:
+                improved, declined = int((merged["v"] < merged["v_prev"]).sum()), int((merged["v"] > merged["v_prev"]).sum())
+            else:
+                improved, declined = int((merged["v"] > merged["v_prev"]).sum()), int((merged["v"] < merged["v_prev"]).sum())
+            parts = [f"{improved}↑"] if improved > 0 else []
+            if declined > 0:
+                parts.append(f"{declined}↓")
+            row_cells.append(", ".join(parts) if parts else "—")
+        table_data[m] = row_cells
+
+    if mode == "Day wise compare":
+        period_labels = [f"{p[4:6]}/{p[6:8]}" if len(p) == 8 else p for p in periods]
+    else:
+        period_labels = list(periods)
+    result = pd.DataFrame(table_data, index=period_labels).T
+    result.index.name = "Metric"
+    return result.reset_index()
+
+
 def fmt_date(s: str) -> str:
     return f"{s[4:6]}/{s[6:8]}" if len(s) == 8 else s
 
@@ -270,11 +359,7 @@ if payment_filter != "All":
 
 seller_table = build_seller_table(filtered_df)
 seller_table = seller_table[seller_table["PHin"] >= min_vol]
-daily_df     = build_daily_table(filtered_df)
 overall      = calculate_summary_metrics(filtered_df)
-
-dates   = sorted(daily_df["reporting_date"].unique())
-sellers = sorted(daily_df["seller_type"].unique())
 
 # ─────────────────────────────────────────────────────────────────────────────
 # PAGE NAVIGATION
@@ -457,8 +542,13 @@ if page == "📊 Overall Metric":
 #  PAGE 2 — DAILY TRENDS
 # ═════════════════════════════════════════════════════════════════════════════
 else:
+    # Lazy: build daily_df only when page 2 is shown
+    daily_df = build_daily_table(filtered_df)
+    dates    = sorted(daily_df["reporting_date"].unique())
+    sellers  = sorted(daily_df["seller_type"].unique())
+
     # ─────────────────────────────────────────────────────────────────────────
-    # SECTION 1 — Daily Seller Count: rows = metrics, columns = dates/weeks/months, cell = N↑, M↓
+    # SECTION 1 — Daily Seller Count (cached)
     # ─────────────────────────────────────────────────────────────────────────
     compare_mode = st.radio(
         "Compare",
@@ -476,101 +566,7 @@ else:
     else:
         st.caption("↑ improved vs previous month · ↓ declined. First month has no prior month.")
 
-    _metric_to_col = {"Volume": "PHin", "Delivered": "conv_num"}
-    row_metrics = ["ZRTO %", "FAC %", "Breach %", "Conv %"]
-    risk_flags = [True, False, True, False]
-    nan = float("nan")
-
-    if compare_mode == "Day wise compare":
-        def _improved_declined_for_metric(m, is_risk_metric):
-            col = _metric_to_col.get(m, m)
-            row_cells = []
-            for i, dt in enumerate(dates):
-                if i == 0:
-                    row_cells.append("—")
-                    continue
-                prev_dt = dates[i - 1]
-                curr = daily_df[daily_df["reporting_date"] == dt][["seller_type", col]].rename(columns={col: "v"})
-                prev = daily_df[daily_df["reporting_date"] == prev_dt][["seller_type", col]].rename(columns={col: "v_prev"})
-                merged = curr.merge(prev, on="seller_type", how="inner")
-                if is_risk_metric:
-                    improved = (merged["v"] < merged["v_prev"]).sum()
-                    declined = (merged["v"] > merged["v_prev"]).sum()
-                else:
-                    improved = (merged["v"] > merged["v_prev"]).sum()
-                    declined = (merged["v"] < merged["v_prev"]).sum()
-                improved, declined = int(improved), int(declined)
-                parts = [f"{improved}↑"] if improved > 0 else []
-                if declined > 0:
-                    parts.append(f"{declined}↓")
-                row_cells.append(", ".join(parts) if parts else "—")
-            return row_cells
-
-        period_labels = [fmt_date(d) for d in dates]
-        table_data = {m: _improved_declined_for_metric(m, risk) for m, risk in zip(row_metrics, risk_flags)}
-    else:
-        # Weekly or Monthly: build period-level aggregates per seller, then improved/declined vs previous period
-        daily_df_copy = daily_df.copy()
-        daily_df_copy["_dt"] = daily_df_copy["reporting_date"].apply(
-            lambda s: datetime.strptime(str(s), "%Y%m%d") if len(str(s)) == 8 else datetime.now()
-        )
-        if compare_mode == "Weekly compare":
-            daily_df_copy["_period"] = daily_df_copy["_dt"].apply(lambda d: d.strftime("%Y-W%W"))
-        else:
-            daily_df_copy["_period"] = daily_df_copy["_dt"].apply(lambda d: d.strftime("%Y-%m"))
-
-        period_agg = (
-            daily_df_copy
-            .groupby(["_period", "seller_type"])
-            .agg(
-                PHin=("PHin", "sum"),
-                conv_num=("conv_num", "sum"),
-                zero_attempt_num=("zero_attempt_num", "sum"),
-                First_attempt_delivered=("First_attempt_delivered", "sum"),
-                fac_deno=("fac_deno", "sum"),
-                Breach_Num=("Breach_Num", "sum"),
-                Breach_Den=("Breach_Den", "sum"),
-            )
-            .reset_index()
-        )
-        period_agg["ZRTO %"] = (period_agg["zero_attempt_num"] / period_agg["PHin"].replace(0, nan) * 100).round(2)
-        period_agg["FAC %"] = (period_agg["First_attempt_delivered"] / period_agg["fac_deno"].replace(0, nan) * 100).round(2)
-        period_agg["Breach %"] = (period_agg["Breach_Num"] / period_agg["Breach_Den"].replace(0, nan) * 100).round(2)
-        period_agg["Conv %"] = (period_agg["conv_num"] / period_agg["PHin"].replace(0, nan) * 100).round(2)
-        period_agg = period_agg.fillna(0)
-        periods = sorted(period_agg["_period"].unique())
-
-        def _improved_declined_period(m, is_risk_metric):
-            col = _metric_to_col.get(m, m)
-            row_cells = []
-            for i, period in enumerate(periods):
-                if i == 0:
-                    row_cells.append("—")
-                    continue
-                prev_period = periods[i - 1]
-                curr = period_agg[period_agg["_period"] == period][["seller_type", col]].rename(columns={col: "v"})
-                prev = period_agg[period_agg["_period"] == prev_period][["seller_type", col]].rename(columns={col: "v_prev"})
-                merged = curr.merge(prev, on="seller_type", how="inner")
-                if is_risk_metric:
-                    improved = (merged["v"] < merged["v_prev"]).sum()
-                    declined = (merged["v"] > merged["v_prev"]).sum()
-                else:
-                    improved = (merged["v"] > merged["v_prev"]).sum()
-                    declined = (merged["v"] < merged["v_prev"]).sum()
-                improved, declined = int(improved), int(declined)
-                parts = [f"{improved}↑"] if improved > 0 else []
-                if declined > 0:
-                    parts.append(f"{declined}↓")
-                row_cells.append(", ".join(parts) if parts else "—")
-            return row_cells
-
-        period_labels = periods
-        table_data = {m: _improved_declined_period(m, risk) for m, risk in zip(row_metrics, risk_flags)}
-
-    count_df = pd.DataFrame(table_data, index=period_labels).T
-    count_df.index.name = "Metric"
-    count_df = count_df.reset_index()
-
+    count_df = build_daily_comparison(daily_df, dates, compare_mode)
     st.dataframe(count_df, use_container_width=True, height=180)
 
     st.divider()
@@ -594,28 +590,12 @@ else:
     st.divider()
 
     # ─────────────────────────────────────────────────────────────────────────
-    # SECTION 2 — Best & Worst rankings (tables with colours)
+    # SECTION 2 — Best & Worst rankings (cached)
     # ─────────────────────────────────────────────────────────────────────────
     st.markdown(f"#### 🏆 Best & Worst Sellers — {metric}")
     st.caption("Overall period · min volume 1,000 PHin")
 
-    rank_agg = daily_df.groupby("seller_type").agg(
-        PHin=("PHin", "sum"),
-        zero_attempt_num=("zero_attempt_num", "sum"),
-        First_attempt_delivered=("First_attempt_delivered", "sum"),
-        fac_deno=("fac_deno", "sum"),
-        Breach_Num=("Breach_Num", "sum"),
-        Breach_Den=("Breach_Den", "sum"),
-        conv_num=("conv_num", "sum"),
-    ).reset_index()
-    rank_agg = rank_agg[rank_agg["PHin"] >= 1000].copy()
-
-    nan = float("nan")
-    rank_agg["ZRTO %"]   = (rank_agg["zero_attempt_num"]        / rank_agg["PHin"].replace(0, nan) * 100).round(2)
-    rank_agg["FAC %"]    = (rank_agg["First_attempt_delivered"] / rank_agg["fac_deno"].replace(0, nan) * 100).round(2)
-    rank_agg["Breach %"] = (rank_agg["Breach_Num"]              / rank_agg["Breach_Den"].replace(0, nan) * 100).round(2)
-    rank_agg["Conv %"]   = (rank_agg["conv_num"]                / rank_agg["PHin"].replace(0, nan) * 100).round(2)
-    rank_agg = rank_agg.fillna(0)
+    rank_agg = build_rank_agg(daily_df)
 
     sorted_rank   = rank_agg.sort_values(metric, ascending=is_risk)
     # Build display columns with no duplicates (metric may be "Breach %", "FAC %", etc.)
