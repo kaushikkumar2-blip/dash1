@@ -205,7 +205,7 @@ def load_client_map(path: str) -> dict:
     except FileNotFoundError:
         pass
     return mapping
-CLIENT_MAP = load_client_map("clients.csv")
+CLIENT_MAP = load_client_map("clients.xlsx")
 
 
 def _resolve_client(seller_str):
