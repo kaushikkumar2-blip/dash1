@@ -16,6 +16,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import numpy as np
 from datetime import datetime
+pd.set_option("styler.render.max_elements", 300000)
 # ─────────────────────────────────────────────────────────────────────────────
 # PAGE CONFIG
 # ─────────────────────────────────────────────────────────────────────────────
