@@ -787,8 +787,8 @@ else:
                     improved = (merged["v"] < merged["v_prev"]).sum()
                     declined = (merged["v"] >= merged["v_prev"]).sum()
                 else:
-                    improved = (merged["v"] > merged["v_prev"]).sum()
-                    declined = (merged["v"] <= merged["v_prev"]).sum()
+                    improved = (merged["v"] => merged["v_prev"]).sum()
+                    declined = (merged["v"] < merged["v_prev"]).sum()
                 improved, declined = int(improved), int(declined)
                 parts = [f"{improved}↑"] if improved > 0 else []
                 if declined > 0:
