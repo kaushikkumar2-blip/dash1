@@ -202,7 +202,7 @@ def load_client_map(path: str) -> dict:
         pass
     return mapping
 
-CLIENT_MAP = load_client_map(r"c:\Users\kaushik.kumar2\Downloads\client list.csv")
+CLIENT_MAP = load_client_map("client list.csv")
 
 
 def _resolve_client(seller_str):
@@ -526,7 +526,7 @@ def _color_gap_vec(s: pd.Series) -> list:
 with st.sidebar:
     st.markdown("## 📦 Seller Dashboard")
     st.divider()
-    data_path = st.text_input("CSV file path", value="7febf8a8c08b66c779f7b45bf5b9a826.csv")
+    data_path = st.text_input("CSV file path", value="cd5a0d281d2bef0117eaeb0bffae3932.csv")
 
     ref_col1, ref_col2 = st.columns([1, 1])
     with ref_col1:
