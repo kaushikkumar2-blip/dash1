@@ -1,0 +1,483 @@
+"""
+FDP / QAAS Query Automation Agent — Direct API approach
+
+Uses Playwright briefly to extract auth cookies from the persistent Chrome profile,
+then calls the QAAS REST API directly with requests — no UI automation needed.
+
+API flow (captured from browser Network tab):
+  1. POST /queryapi/queries  (multipart/form-data) → returns handleId (XML)
+  2. GET  /queryapi/queries/{handleId}              → poll status (JSON)
+  3. GET  /queryapi/queries/{handleId}/results/…    → download CSV
+"""
+
+import json
+import logging
+import os
+import re
+import shutil
+import subprocess
+import sys
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+
+import requests as http_requests
+import yaml
+from playwright.sync_api import sync_playwright
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+)
+log = logging.getLogger(__name__)
+
+ROOT_DIR = Path(__file__).resolve().parent
+CONFIG_PATH = ROOT_DIR / "config.yaml"
+QUERY_FILE = ROOT_DIR / "query.sql"
+
+FDP_API_HEADERS = {
+    "fdp-lens-api-key": "ce5234ac-a24b-4fe4-8679-2ebac0ec941c",
+    "fdp-lens-app-name": "FlipQuery",
+    "x-requested-with": "XMLHttpRequest",
+    "cache-control": "no-cache",
+}
+
+
+def load_config() -> dict:
+    with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+        return yaml.safe_load(f)
+
+
+def get_credentials() -> tuple[str, str]:
+    username = os.environ.get("FDP_USERNAME")
+    password = os.environ.get("FDP_PASSWORD")
+    if not username or not password:
+        log.error("Set FDP_USERNAME and FDP_PASSWORD env vars (see .env.example)")
+        sys.exit(1)
+    return username, password
+
+
+def get_query() -> str:
+    if QUERY_FILE.exists():
+        text = QUERY_FILE.read_text(encoding="utf-8").strip()
+        lines = [l for l in text.splitlines() if not l.strip().startswith("--")]
+        text = "\n".join(lines).strip()
+        log.info("Loaded query from %s (%d chars)", QUERY_FILE.name, len(text))
+        return text
+    return ""
+
+
+def _file_size(path: Path) -> str:
+    size = path.stat().st_size
+    for unit in ("B", "KB", "MB", "GB"):
+        if size < 1024:
+            return f"{size:.1f} {unit}"
+        size /= 1024
+    return f"{size:.1f} TB"
+
+
+# ── Step 1: Extract cookies via Playwright ────────────────────────────────────
+
+def extract_cookies(config: dict, username: str, password: str) -> dict[str, str]:
+    """
+    Launch Playwright with persistent Chrome profile to get auth cookies.
+    If session is active, this takes ~5 seconds.
+    """
+    browser_cfg = config.get("browser", {})
+    profile_dir = ROOT_DIR / browser_cfg.get("profile_dir", ".chrome_profile")
+    profile_dir.mkdir(parents=True, exist_ok=True)
+    login_cfg = config.get("login", {})
+
+    log.info("Extracting auth cookies from Chrome profile...")
+
+    cookies = {}
+
+    with sync_playwright() as pw:
+        context = pw.chromium.launch_persistent_context(
+            user_data_dir=str(profile_dir),
+            channel="chrome",
+            headless=browser_cfg.get("headless", False),
+            viewport={"width": 1280, "height": 720},
+            args=["--disable-blink-features=AutomationControlled"],
+        )
+
+        page = context.pages[0] if context.pages else context.new_page()
+        timeout = browser_cfg.get("timeout_ms", 60_000)
+
+        try:
+            page.goto(config["site"]["base_url"], timeout=timeout)
+            time.sleep(3)
+            current_url = page.url
+
+            if "fdp.fkinternal.com" in current_url:
+                log.info("Session active — already authenticated")
+
+            elif "2ndFactor" in current_url:
+                log.info("2FA required — complete it in the Chrome window...")
+                _wait_for_fdp(page, login_cfg.get("post_login_timeout_ms", 180_000))
+
+            else:
+                log.info("Login required at: %s", current_url)
+                _do_login(page, login_cfg, username, password)
+                time.sleep(3)
+                if "2ndFactor" in page.url:
+                    log.info("2FA required after login — complete it now...")
+                    _wait_for_fdp(page, login_cfg.get("post_login_timeout_ms", 180_000))
+                elif "fdp.fkinternal.com" not in page.url:
+                    _wait_for_fdp(page, login_cfg.get("post_login_timeout_ms", 180_000))
+
+            raw_cookies = context.cookies("http://fdp.fkinternal.com")
+            for c in raw_cookies:
+                cookies[c["name"]] = c["value"]
+
+            log.info("Extracted %d cookies", len(cookies))
+
+        finally:
+            try:
+                context.close()
+            except Exception:
+                pass
+
+    if not cookies:
+        log.error("No cookies extracted — auth may have failed")
+        sys.exit(1)
+
+    return cookies
+
+
+def _do_login(page, login_cfg: dict, username: str, password: str) -> None:
+    try:
+        page.wait_for_selector(login_cfg["username_selector"], timeout=15_000)
+    except Exception:
+        log.error("Login form not found at: %s", page.url)
+        sys.exit(1)
+
+    page.fill(login_cfg["username_selector"], username)
+    page.fill(login_cfg["password_selector"], password)
+
+    try:
+        idp_sel = login_cfg.get("idp_dropdown_selector", "select")
+        if page.locator(idp_sel).count() > 0:
+            page.select_option(idp_sel, label=login_cfg.get("idp_value", "Flipkart LDAP"))
+    except Exception:
+        pass
+
+    page.click(login_cfg["submit_selector"])
+
+
+def _wait_for_fdp(page, max_wait_ms: int) -> None:
+    max_seconds = max_wait_ms // 1000
+    for elapsed in range(0, max_seconds, 3):
+        time.sleep(3)
+        try:
+            if "fdp.fkinternal.com" in page.url:
+                log.info("Authenticated after ~%ds", elapsed + 3)
+                return
+        except Exception:
+            continue
+    log.error("Timed out waiting for FDP auth")
+    sys.exit(1)
+
+
+# ── Step 2: Submit query via API ──────────────────────────────────────────────
+
+def submit_query(session: http_requests.Session, config: dict, sql: str) -> str:
+    """POST query as multipart/form-data. Returns the handleId."""
+    api_cfg = config.get("api", {})
+    base = api_cfg.get("base_url", "http://fdp.fkinternal.com/p/fdp/lens/lensapi/queryapi")
+    submit_url = f"{base}/queries"
+
+    form_fields = {
+        "sessionid": (None, "undefined"),
+        "query": (None, sql),
+        "operation": (None, "execute"),
+        "appendEOF": (None, "true"),
+        "sourceName": (None, api_cfg.get("source_name", "BIGQUERY")),
+        "queue": (None, api_cfg.get("queue_name", "fulfillment_adhoc")),
+        "rhNodeId": (None, api_cfg.get("team_name", "core-logistics-t")),
+    }
+
+    log.info("Submitting query to %s", submit_url)
+    log.info("Source: %s | Queue: %s | Team: %s",
+             form_fields["sourceName"][1], form_fields["queue"][1], form_fields["rhNodeId"][1])
+
+    resp = session.post(submit_url, files=form_fields, timeout=120)
+
+    log.info("Response status: %d", resp.status_code)
+    log.info("Response (first 500 chars): %s", resp.text[:500])
+
+    if resp.status_code not in (200, 201, 202):
+        log.error("Query submission failed: %d — %s", resp.status_code, resp.text[:1000])
+        sys.exit(1)
+
+    # Try JSON first (when accept header requests JSON)
+    try:
+        data = resp.json()
+        handle_id = (
+            data.get("data", {}).get("handleId")
+            or data.get("queryHandle", {}).get("handleId")
+            or data.get("handleId")
+        )
+        if handle_id:
+            log.info("Query submitted — handleId: %s", handle_id)
+            return handle_id
+    except Exception:
+        pass
+
+    # Fallback: XML response
+    handle_match = re.search(r"<handleId>([^<]+)</handleId>", resp.text)
+    if handle_match:
+        handle_id = handle_match.group(1)
+        log.info("Query submitted — handleId: %s", handle_id)
+        return handle_id
+
+    log.error("Could not extract handleId from response: %s", resp.text[:500])
+    sys.exit(1)
+
+
+# ── Step 3: Poll for results ─────────────────────────────────────────────────
+
+def poll_status(session: http_requests.Session, config: dict, handle_id: str) -> dict:
+    """Poll GET /queries/{handleId} until completed or failed."""
+    api_cfg = config.get("api", {})
+    base = api_cfg.get("base_url", "http://fdp.fkinternal.com/p/fdp/lens/lensapi/queryapi")
+    status_url = f"{base}/queries/{handle_id}"
+    max_wait = api_cfg.get("max_wait_seconds", 600)
+    poll_interval = api_cfg.get("poll_interval_seconds", 15)
+
+    log.info("Polling status at %s (max %ds)", status_url, max_wait)
+
+    elapsed = 0
+    while elapsed < max_wait:
+        time.sleep(poll_interval)
+        elapsed += poll_interval
+
+        try:
+            resp = session.get(status_url, timeout=30)
+        except Exception as e:
+            log.warning("Poll failed: %s", e)
+            continue
+
+        if resp.status_code != 200:
+            log.warning("Status returned %d | Body: %s", resp.status_code, resp.text[:300])
+            continue
+
+        try:
+            data = resp.json()
+        except Exception:
+            log.info("  [%ds] Non-JSON response: %s", elapsed, resp.text[:200])
+            continue
+
+        # Status can be a string or a nested object like {"status": {"status": "successful"}}
+        raw_status = data.get("status", {})
+        if isinstance(raw_status, dict):
+            status = str(raw_status.get("status", "")).lower()
+            result_available = raw_status.get("isResultSetAvailable", False)
+        else:
+            status = str(raw_status).lower()
+            result_available = data.get("isResultSetAvailable", False)
+
+        log.info("  [%ds/%ds] Status: %s | ResultAvailable: %s", elapsed, max_wait, status, result_available)
+
+        if status in ("completed", "succeeded", "success", "successful", "done", "finished"):
+            log.info("Query completed after %ds!", elapsed)
+            return data
+
+        if status in ("failed", "error", "cancelled", "killed"):
+            log.error("Query %s! Details: %s", status, json.dumps(data)[:500])
+            sys.exit(1)
+
+    log.error("Query timed out after %ds", max_wait)
+    sys.exit(1)
+
+
+# ── Step 4: Download results ─────────────────────────────────────────────────
+
+def download_results(
+    session: http_requests.Session, config: dict, handle_id: str, result_data: dict
+) -> Path:
+    """Download the query results as CSV."""
+    api_cfg = config.get("api", {})
+    base = api_cfg.get("base_url", "http://fdp.fkinternal.com/p/fdp/lens/lensapi/queryapi")
+
+    download_dir = ROOT_DIR / "downloads"
+    download_dir.mkdir(exist_ok=True)
+
+    # Check result_data for download-related fields
+    signed_url = result_data.get("signedUrl")
+    result_set_path = result_data.get("resultSetPath")
+    log.info("signedUrl: %s", str(signed_url)[:200] if signed_url else "None")
+    log.info("resultSetPath: %s", str(result_set_path)[:200] if result_set_path else "None")
+
+    download_url = (
+        result_data.get("downloadUrl")
+        or result_data.get("resultUrl")
+        or signed_url
+    )
+
+    if not download_url:
+        # Try common QAAS download endpoints
+        candidates = [
+            f"{base}/queries/{handle_id}/results/download",
+            f"{base}/queries/{handle_id}/download",
+            f"{base}/query/{handle_id}/results/download",
+            f"{base}/savedqueries/{handle_id}/results/download",
+            f"{base}/queries/{handle_id}/results",
+            f"http://fdp.fkinternal.com/p/fdp/lens/lensapi/queryapi/results/{handle_id}/download",
+        ]
+
+        # If resultSetPath exists, try constructing a download URL from it
+        if result_set_path:
+            candidates.insert(0, f"{base}/results/download?path={result_set_path}")
+            candidates.insert(0, result_set_path)
+
+        for url in candidates:
+            log.info("Trying download: %s", url)
+            try:
+                resp = session.get(url, timeout=60, stream=True, allow_redirects=True)
+                ct = resp.headers.get("Content-Type", "")
+                cl = int(resp.headers.get("Content-Length", "0") or "0")
+                log.info("  -> %d | Content-Type: %s | Length: %d", resp.status_code, ct, cl)
+
+                if resp.status_code == 200 and (
+                    "csv" in ct or "octet" in ct or "text/plain" in ct or cl > 100
+                ):
+                    download_url = url
+                    break
+            except Exception as e:
+                log.info("  -> error: %s", e)
+
+    if not download_url:
+        log.warning("Could not auto-discover download URL.")
+        log.info("Result data keys: %s", list(result_data.keys()))
+        for key in ("signedUrl", "resultSetPath", "downloadUrl", "resultUrl"):
+            log.info("  %s = %s", key, str(result_data.get(key))[:300])
+        log.info("Result page: http://fdp.fkinternal.com/query/result/%s", handle_id)
+        sys.exit(1)
+
+    log.info("Downloading from: %s", download_url)
+    resp = session.get(download_url, timeout=300, stream=True)
+    resp.raise_for_status()
+
+    content_disp = resp.headers.get("Content-Disposition", "")
+    if "filename=" in content_disp:
+        filename = content_disp.split("filename=")[-1].strip('" ')
+    else:
+        date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        filename = f"fdp_data_{date_str}.csv"
+
+    dest = download_dir / filename
+    with open(dest, "wb") as f:
+        for chunk in resp.iter_content(chunk_size=8192):
+            f.write(chunk)
+
+    log.info("Downloaded: %s (%s)", dest.name, _file_size(dest))
+    return dest
+
+
+# ── Step 5: Save and rename ──────────────────────────────────────────────────
+
+def rename_output(downloaded: Path, config: dict) -> Path:
+    out_cfg = config.get("output", {})
+    out_folder = ROOT_DIR / out_cfg.get("folder", "data")
+    out_folder.mkdir(parents=True, exist_ok=True)
+
+    date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    pattern = out_cfg.get("rename_pattern", "fdp_data_{date}")
+    base_name = pattern.replace("{date}", date_str)
+    ext = downloaded.suffix or f".{out_cfg.get('format', 'csv')}"
+
+    final_path = out_folder / f"{base_name}{ext}"
+    shutil.move(str(downloaded), str(final_path))
+    log.info("Saved to %s", final_path.relative_to(ROOT_DIR))
+    return final_path
+
+
+# ── Step 6: Git commit and push ──────────────────────────────────────────────
+
+def git_push(file_path: Path, config: dict) -> None:
+    gh_cfg = config.get("github", {})
+    if not gh_cfg.get("enabled", True):
+        log.info("GitHub push disabled in config")
+        return
+
+    date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    message = gh_cfg.get("commit_message", "chore: update FDP data {date}")
+    message = message.replace("{date}", date_str)
+    branch = gh_cfg.get("branch", "main")
+    remote = gh_cfg.get("remote", "origin")
+    repo_path = Path(gh_cfg.get("repo_path", "."))
+    if not repo_path.is_absolute():
+        repo_path = ROOT_DIR / repo_path
+
+    rel_file = file_path.relative_to(repo_path)
+    log.info("Git: staging %s", rel_file)
+
+    commands = [
+        ["git", "add", str(rel_file)],
+        ["git", "commit", "-m", message],
+        ["git", "push", remote, branch],
+    ]
+    for cmd in commands:
+        result = subprocess.run(
+            cmd, cwd=str(repo_path), capture_output=True, text=True
+        )
+        if result.returncode != 0:
+            combined = result.stdout + result.stderr
+            if "nothing to commit" in combined:
+                log.info("No new changes to commit")
+                return
+            log.error("Git command failed: %s\n%s", " ".join(cmd), combined)
+            sys.exit(1)
+
+    log.info("Pushed to %s/%s", remote, branch)
+
+
+# ── Main ─────────────────────────────────────────────────────────────────────
+
+def main() -> None:
+    log.info("=" * 55)
+    log.info("  FDP / QAAS API Scraper Agent Starting")
+    log.info("=" * 55)
+
+    config = load_config()
+    username, password = get_credentials()
+    sql = get_query()
+    if not sql:
+        log.error("No query found. Create query.sql or check config")
+        sys.exit(1)
+
+    # Step 1: Get auth cookies
+    log.info("Step 1/5: Authenticating...")
+    cookies = extract_cookies(config, username, password)
+
+    session = http_requests.Session()
+    for name, value in cookies.items():
+        session.cookies.set(name, value, domain="fdp.fkinternal.com")
+    session.headers.update(FDP_API_HEADERS)
+    session.headers["accept"] = "application/json; q=1.0, text/*; q=0.8, */*; q=0.1"
+
+    # Step 2: Submit query
+    log.info("Step 2/5: Submitting query via API...")
+    handle_id = submit_query(session, config, sql)
+
+    # Step 3: Poll for results
+    log.info("Step 3/5: Polling for results...")
+    result_data = poll_status(session, config, handle_id)
+
+    # Step 4: Download
+    log.info("Step 4/5: Downloading results...")
+    downloaded = download_results(session, config, handle_id, result_data)
+
+    # Step 5: Save and push to Git
+    log.info("Step 5/5: Saving and pushing to Git...")
+    final_path = rename_output(downloaded, config)
+    git_push(final_path, config)
+
+    log.info("=" * 55)
+    log.info("  Done! Data saved to %s", final_path.relative_to(ROOT_DIR))
+    log.info("=" * 55)
+
+
+if __name__ == "__main__":
+    main()
