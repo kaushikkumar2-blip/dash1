@@ -263,4 +263,4 @@ LEFT JOIN
     AND conv.seller_type = breach.seller_type
     AND conv.payment_type = breach.payment_type
 WHERE
-    conv.shipment_received_at_origin_date_key BETWEEN 20220101 AND 20260326;
+    conv.shipment_received_at_origin_date_key BETWEEN 20220101 AND {end_date};

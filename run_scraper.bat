@@ -1,8 +1,8 @@
 @echo off
 REM ============================================================
-REM  FDP Scraper Agent — Launcher Script
-REM  Loads credentials and runs the scraper.
-REM  Used by Windows Task Scheduler for daily automation.
+REM  FDP Scraper Agent — Daily Launcher Script
+REM  Loads credentials from .env and runs the scraper.
+REM  Scheduled via Windows Task Scheduler.
 REM ============================================================
 
 cd /d "%~dp0"
@@ -15,7 +15,13 @@ for /f "usebackq tokens=1,* delims==" %%a in (".env") do (
     set "%%a=%%b"
 )
 
-REM Run the scraper
-.venv\Scripts\python.exe scraper.py >> "logs\run_%date:~-4%-%date:~4,2%-%date:~7,2%.log" 2>&1
+REM Get date for log filename (YYYY-MM-DD)
+for /f "tokens=2 delims==" %%I in ('wmic os get localdatetime /format:list') do set datetime=%%I
+set LOGDATE=%datetime:~0,4%-%datetime:~4,2%-%datetime:~6,2%
 
-echo [%date% %time%] Scraper run completed >> logs\run_log.txt
+echo [%LOGDATE% %time%] Starting scraper run... >> logs\run_log.txt
+
+REM Run the scraper
+.venv\Scripts\python.exe scraper.py >> "logs\run_%LOGDATE%.log" 2>&1
+
+echo [%LOGDATE% %time%] Scraper run completed (exit code: %ERRORLEVEL%) >> logs\run_log.txt

@@ -18,7 +18,7 @@ import shutil
 import subprocess
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import requests as http_requests
@@ -62,6 +62,13 @@ def get_query() -> str:
         text = QUERY_FILE.read_text(encoding="utf-8").strip()
         lines = [l for l in text.splitlines() if not l.strip().startswith("--")]
         text = "\n".join(lines).strip()
+
+        # Replace {end_date} with yesterday's date (YYYYMMDD integer format)
+        yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y%m%d")
+        if "{end_date}" in text:
+            text = text.replace("{end_date}", yesterday)
+            log.info("Dynamic end_date set to %s (yesterday)", yesterday)
+
         log.info("Loaded query from %s (%d chars)", QUERY_FILE.name, len(text))
         return text
     return ""
@@ -410,11 +417,16 @@ def git_push(file_path: Path, config: dict) -> None:
     if not repo_path.is_absolute():
         repo_path = ROOT_DIR / repo_path
 
-    rel_file = file_path.relative_to(repo_path)
-    log.info("Git: staging %s", rel_file)
+    # Copy to repo root so it appears at top level on GitHub
+    root_copy = repo_path / file_path.name
+    if file_path != root_copy:
+        shutil.copy2(str(file_path), str(root_copy))
+        log.info("Copied to repo root: %s", root_copy.name)
+
+    log.info("Git: staging %s", root_copy.name)
 
     commands = [
-        ["git", "add", str(rel_file)],
+        ["git", "add", root_copy.name],
         ["git", "commit", "-m", message],
         ["git", "push", remote, branch],
     ]
