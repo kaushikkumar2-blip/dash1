@@ -11,10 +11,23 @@ Requirements:
     pip install streamlit pandas numpy
 """
 
+from __future__ import annotations
+
+import streamlit as st
+import pandas as pd
+import numpy as np
+import hmac
+import json
+import re
+from pathlib import Path
+from datetime import datetime, timedelta
+
+
 import streamlit as st
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
+
 # ─────────────────────────────────────────────────────────────────────────────
 # PAGE CONFIG
 # ─────────────────────────────────────────────────────────────────────────────
@@ -24,6 +37,145 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+
+ROOT_DIR = Path(__file__).resolve().parent
+CLIENT_LIST_CSV = ROOT_DIR / "client list.csv"
+ADMIN_EMAILS_JSON = ROOT_DIR / "admin_emails.json"
+_METRICS_CSV_NAME = "cd5a0d281d2bef0117eaeb0bffae3932.csv"
+
+
+def _resolve_default_metrics_csv() -> Path:
+    """Prefer data/ (common in repo layout); fall back to same directory as this script."""
+    data_p = ROOT_DIR / "data" / _METRICS_CSV_NAME
+    root_p = ROOT_DIR / _METRICS_CSV_NAME
+    if data_p.is_file():
+        return data_p
+    return root_p
+
+
+DEFAULT_METRICS_CSV = _resolve_default_metrics_csv()
+_EMAIL_RE = re.compile(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
+
+
+def _safe_secret_compare(a: str, b: str) -> bool:
+    try:
+        return hmac.compare_digest(a.encode("utf-8"), b.encode("utf-8"))
+    except ValueError:
+        return False
+
+
+
+
+def _norm_email(s: str) -> str:
+    return (s or "").strip().lower()
+
+
+def _dashboard_auth_cfg() -> dict:
+    try:
+        x = st.secrets.get("dashboard_auth")
+        if x is None:
+            return {}
+        return dict(x)
+    except Exception:
+        return {}
+
+
+def _load_admin_emails_from_disk() -> list[str]:
+    if not ADMIN_EMAILS_JSON.is_file():
+        return []
+    try:
+        data = json.loads(ADMIN_EMAILS_JSON.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return []
+    if not isinstance(data, list):
+        return []
+    return sorted({_norm_email(e) for e in data if isinstance(e, str) and _norm_email(e)})
+
+
+def _save_admin_emails_to_disk(emails: list[str]) -> None:
+    norm = sorted({_norm_email(e) for e in emails if _norm_email(e)})
+    ADMIN_EMAILS_JSON.write_text(json.dumps(norm, indent=2), encoding="utf-8")
+
+
+def _ensure_admin_file_seeded() -> None:
+    cfg = _dashboard_auth_cfg()
+    boot = cfg.get("bootstrap_admin_emails") or []
+    if not isinstance(boot, list):
+        boot = []
+    boot_norm = [_norm_email(e) for e in boot if _norm_email(e)]
+    if not ADMIN_EMAILS_JSON.is_file() and boot_norm:
+        _save_admin_emails_to_disk(boot_norm)
+
+
+def _viewer_accounts() -> list[dict]:
+    cfg = _dashboard_auth_cfg()
+    v = cfg.get("viewers")
+    if not v:
+        return []
+    if isinstance(v, list):
+        return [dict(x) for x in v if isinstance(x, dict)]
+    return []
+
+
+def _attempt_login(email: str, password: str) -> tuple[bool, str, str, str | None]:
+    """Return (ok, role, error_message, viewer_zone_or_none)."""
+    em = _norm_email(email)
+    pwd = password or ""
+    cfg = _dashboard_auth_cfg()
+    admin_pwd = str(cfg.get("admin_password", "") or "")
+    _ensure_admin_file_seeded()
+    admins = _load_admin_emails_from_disk()
+    if em and em in admins and admin_pwd and _safe_secret_compare(pwd, admin_pwd):
+        return True, "admin", "", None
+    for row in _viewer_accounts():
+        ve = _norm_email(str(row.get("email", "")))
+        vp = str(row.get("password", "") or "")
+        zone = str(row.get("zone", "") or "").strip()
+        if ve == em and vp and _safe_secret_compare(pwd, vp):
+            if not zone:
+                return False, "", "Viewer account missing zone in secrets.", None
+            return True, "viewer", "", zone
+    if not cfg and not _viewer_accounts():
+        return False, "", "Missing dashboard_auth in .streamlit/secrets.toml.", None
+    return False, "", "Invalid email or password.", None
+
+
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
+if "auth_email" not in st.session_state:
+    st.session_state.auth_email = ""
+if "auth_role" not in st.session_state:
+    st.session_state.auth_role = ""
+if "auth_zone" not in st.session_state:
+    st.session_state.auth_zone = None
+
+if not st.session_state.authenticated:
+    st.title("Seller Dashboard — Sign in")
+    cfg = _dashboard_auth_cfg()
+    if not cfg.get("admin_password") and not _viewer_accounts():
+        st.error(
+            "Configure **[dashboard_auth]** in `.streamlit/secrets.toml` "
+            "(copy from `.streamlit/secrets.toml.example`)."
+        )
+    with st.form("login_form"):
+        le = st.text_input("Email")
+        lp = st.text_input("Password", type="password")
+        sub = st.form_submit_button("Sign in")
+    if sub:
+        ok, role, msg, zone = _attempt_login(le, lp)
+        if ok:
+            st.session_state.authenticated = True
+            st.session_state.auth_email = _norm_email(le)
+            st.session_state.auth_role = role
+            st.session_state.auth_zone = zone
+            st.rerun()
+        elif msg:
+            st.error(msg)
+    st.stop()
+
+IS_ADMIN = st.session_state.auth_role == "admin"
+
 
 st.markdown("""
 <style>
@@ -173,6 +325,80 @@ def render_sticky_table(df, max_height="400px", no_vscroll=False):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+
+# CLIENT MAPPING (seller code → client name, code → region/zone)
+# ─────────────────────────────────────────────────────────────────────────────
+@st.cache_data(ttl=120)
+def load_client_and_region(path: str) -> tuple[dict, dict]:
+    """Load seller-code → client name and code → Region from client list CSV."""
+    client_map: dict[str, str] = {}
+    code_to_region: dict[str, str] = {}
+    p = Path(path)
+    if not p.is_file():
+        return client_map, code_to_region
+    try:
+        df = pd.read_csv(p)
+    except Exception:
+        return client_map, code_to_region
+    if df.empty:
+        return client_map, code_to_region
+    cols_lower = {str(c).strip().lower(): c for c in df.columns}
+
+    def _pick(*substrings: str) -> str | None:
+        for key, orig in cols_lower.items():
+            if all(s in key for s in substrings):
+                return orig
+        return None
+
+    code_key = _pick("customer", "code") or _pick("seller", "code")
+    name_key = _pick("customer", "name")
+    region_key = _pick("region")
+    if not code_key or not name_key or not region_key:
+        cols = list(df.columns)
+        if len(cols) >= 5:
+            code_key, name_key, region_key = cols[0], cols[1], cols[4]
+        else:
+            return client_map, code_to_region
+
+    for _, row in df.iterrows():
+        codes_cell = row[code_key]
+        if pd.isna(codes_cell):
+            continue
+        codes_str = str(codes_cell).strip()
+        name_cell, region_cell = row[name_key], row[region_key]
+        client_name = "" if pd.isna(name_cell) else str(name_cell).strip()
+        region = "" if pd.isna(region_cell) else str(region_cell).strip()
+        if not codes_str or not region:
+            continue
+        for code in codes_str.split("/"):
+            code = code.strip().upper()
+            if not code:
+                continue
+            if client_name:
+                client_map[code] = client_name
+            code_to_region[code] = region
+    return client_map, code_to_region
+
+
+CLIENT_MAP, CODE_TO_REGION = load_client_and_region(str(CLIENT_LIST_CSV))
+
+
+def seller_types_in_zone(seller_types: list, zone: str, code_to_region: dict) -> list[str]:
+    """Seller types where at least one slash-separated code maps to zone (exact Region string)."""
+    z = (zone or "").strip()
+    if not z:
+        return []
+    out: list[str] = []
+    for stype in seller_types:
+        if not isinstance(stype, str):
+            continue
+        for part in stype.split("/"):
+            c = part.strip().upper()
+            if code_to_region.get(c) == z:
+                out.append(stype)
+                break
+    return sorted(set(out))
+
 # CLIENT MAPPING (seller code → client name)
 # ─────────────────────────────────────────────────────────────────────────────
 @st.cache_data(ttl=120)
@@ -203,6 +429,7 @@ def load_client_map(path: str) -> dict:
     return mapping
 
 CLIENT_MAP = load_client_map("client list.csv")
+
 
 
 def _resolve_client(seller_str):
@@ -525,8 +752,18 @@ def _color_gap_vec(s: pd.Series) -> list:
 # ─────────────────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.markdown("## 📦 Seller Dashboard")
+
+    role_label = "Admin" if IS_ADMIN else f"Viewer ({st.session_state.auth_zone or '—'})"
+    st.caption(f"**{st.session_state.auth_email}** · {role_label}")
+    if st.button("Log out", use_container_width=True, key="logout_btn"):
+        for _k in ("authenticated", "auth_email", "auth_role", "auth_zone"):
+            st.session_state.pop(_k, None)
+        st.rerun()
     st.divider()
-    data_path = st.text_input("CSV file path", value="cd5a0d281d2bef0117eaeb0bffae3932.csv")
+    if IS_ADMIN:
+        data_path = st.text_input("CSV file path", value=str(DEFAULT_METRICS_CSV))
+    else:
+        data_path = str(DEFAULT_METRICS_CSV)
 
     ref_col1, ref_col2 = st.columns([1, 1])
     with ref_col1:
@@ -548,14 +785,57 @@ with st.sidebar:
             unsafe_allow_html=True,
         )
 
+    if IS_ADMIN:
+        st.divider()
+        with st.expander("Admin users", expanded=False):
+            cur_admins = _load_admin_emails_from_disk()
+            if cur_admins:
+                st.markdown("**Admin emails**")
+                for _e in cur_admins:
+                    st.text(_e)
+            else:
+                st.caption("No admin emails on file. Add one below or set bootstrap_admin_emails in secrets.")
+            new_ad = st.text_input("Add admin email", key="new_admin_email_input")
+            if st.button("Add email", key="add_admin_email_btn"):
+                ne = _norm_email(new_ad)
+                if not ne or not _EMAIL_RE.match(ne):
+                    st.error("Enter a valid email address.")
+                elif ne in cur_admins:
+                    st.warning("That email is already an admin.")
+                else:
+                    _save_admin_emails_to_disk(cur_admins + [ne])
+                    st.success(f"Added {ne}")
+                    st.rerun()
+            rm_opts = ["—"] + cur_admins
+            rm_pick = st.selectbox("Remove admin", options=rm_opts, key="remove_admin_select")
+            if st.button("Remove selected", key="remove_admin_btn") and rm_pick != "—":
+                _save_admin_emails_to_disk([e for e in cur_admins if e != rm_pick])
+                st.success(f"Removed {rm_pick}")
+                st.rerun()
+
+
     st.divider()
     st.markdown("### Global Filters")
 
 try:
     raw_df = load_raw(data_path)
 except FileNotFoundError:
-    st.error(f"File not found: `{data_path}`. Update the path in the sidebar.")
+
+    _hint = " Update the path in the sidebar." if IS_ADMIN else ""
+    st.error(f"File not found: `{data_path}`.{_hint}")
     st.stop()
+
+if st.session_state.auth_role == "viewer":
+    vz = st.session_state.auth_zone or ""
+    all_types = list(raw_df["seller_type"].unique())
+    allowed_types = seller_types_in_zone(all_types, vz, CODE_TO_REGION)
+    raw_df = raw_df[raw_df["seller_type"].isin(allowed_types)]
+    if raw_df.empty:
+        st.warning(
+            f"No rows match your zone **{vz}** for the codes in this metrics file. "
+            "Check that seller codes exist in the client list with that Region."
+        )
+        st.stop()
 
 seller_list = sorted(raw_df["seller_type"].unique())
 

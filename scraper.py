@@ -85,10 +85,31 @@ def _file_size(path: Path) -> str:
 
 # ── Step 1: Extract cookies via Playwright ────────────────────────────────────
 
+def _test_api_cookies(cookies: dict[str, str], config: dict) -> bool:
+    """Quick check: do the extracted cookies authenticate against the API?"""
+    api_cfg = config.get("api", {})
+    base = api_cfg.get("base_url", "http://fdp.fkinternal.com/p/fdp/lens/lensapi/queryapi")
+    test_url = f"{base}/queries"
+    try:
+        resp = http_requests.get(
+            test_url,
+            cookies=cookies,
+            headers=FDP_API_HEADERS,
+            timeout=15,
+            allow_redirects=False,
+        )
+        log.info("API cookie test: status %d", resp.status_code)
+        return resp.status_code != 401
+    except Exception as e:
+        log.warning("API cookie test failed: %s", e)
+        return False
+
+
 def extract_cookies(config: dict, username: str, password: str) -> dict[str, str]:
     """
     Launch Playwright with persistent Chrome profile to get auth cookies.
-    If session is active, this takes ~5 seconds.
+    After extraction, verifies cookies against the API. If they are stale,
+    forces a fresh login with the browser kept open for 2FA.
     """
     browser_cfg = config.get("browser", {})
     profile_dir = ROOT_DIR / browser_cfg.get("profile_dir", ".chrome_profile")
@@ -110,6 +131,7 @@ def extract_cookies(config: dict, username: str, password: str) -> dict[str, str
 
         page = context.pages[0] if context.pages else context.new_page()
         timeout = browser_cfg.get("timeout_ms", 60_000)
+        post_login_wait = login_cfg.get("post_login_timeout_ms", 180_000)
 
         try:
             page.goto(config["site"]["base_url"], timeout=timeout)
@@ -117,27 +139,57 @@ def extract_cookies(config: dict, username: str, password: str) -> dict[str, str
             current_url = page.url
 
             if "fdp.fkinternal.com" in current_url:
-                log.info("Session active — already authenticated")
-
+                log.info("Page loaded on FDP domain")
             elif "2ndFactor" in current_url:
                 log.info("2FA required — complete it in the Chrome window...")
-                _wait_for_fdp(page, login_cfg.get("post_login_timeout_ms", 180_000))
-
+                _wait_for_fdp(page, post_login_wait)
             else:
                 log.info("Login required at: %s", current_url)
                 _do_login(page, login_cfg, username, password)
                 time.sleep(3)
                 if "2ndFactor" in page.url:
                     log.info("2FA required after login — complete it now...")
-                    _wait_for_fdp(page, login_cfg.get("post_login_timeout_ms", 180_000))
+                    _wait_for_fdp(page, post_login_wait)
                 elif "fdp.fkinternal.com" not in page.url:
-                    _wait_for_fdp(page, login_cfg.get("post_login_timeout_ms", 180_000))
+                    _wait_for_fdp(page, post_login_wait)
+
+            # Also navigate to the query page to refresh API session cookies
+            log.info("Visiting query page to refresh API cookies...")
+            page.goto(config["site"]["query_url"], timeout=timeout)
+            time.sleep(3)
 
             raw_cookies = context.cookies("http://fdp.fkinternal.com")
             for c in raw_cookies:
                 cookies[c["name"]] = c["value"]
+            log.info("Extracted %d cookies (names: %s)", len(cookies), list(cookies.keys()))
 
-            log.info("Extracted %d cookies", len(cookies))
+            # Verify cookies actually work against the API
+            if cookies and not _test_api_cookies(cookies, config):
+                log.warning("Cookies are stale — forcing fresh login...")
+                login_url = config["site"]["base_url"] + "/s/fdp/login"
+                page.goto(login_url, timeout=timeout)
+                time.sleep(2)
+
+                current_url = page.url
+                if "fdp.fkinternal.com/query" not in current_url:
+                    log.info("Please complete login/2FA in the browser window...")
+                    if "2ndFactor" not in current_url:
+                        try:
+                            _do_login(page, login_cfg, username, password)
+                            time.sleep(3)
+                        except Exception:
+                            log.info("Auto-login failed, waiting for manual login...")
+                    _wait_for_fdp(page, post_login_wait)
+
+                # Re-visit query page after fresh login
+                page.goto(config["site"]["query_url"], timeout=timeout)
+                time.sleep(3)
+
+                cookies.clear()
+                raw_cookies = context.cookies("http://fdp.fkinternal.com")
+                for c in raw_cookies:
+                    cookies[c["name"]] = c["value"]
+                log.info("Re-extracted %d cookies after fresh login", len(cookies))
 
         finally:
             try:
