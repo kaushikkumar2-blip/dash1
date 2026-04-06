@@ -27,13 +27,7 @@ WITH conv AS (
         ON ext.shipment_received_at_origin_date_key = dim.date_dim_key
     WHERE
         seller_type IN (
-            'SDL', 'OIP', 'GLA', 'FMB', 'ROP', 'CIQ', 'ABE', 'PFP', 'SRS', 'SRT', 'FCY', 'NAP', 'CMD', 'PSP',
-            'TMG', 'FKM', 'FKZ', 'MAM', 'NKF', 'BRP', 'VET', 'WML', 'ILS', 'ILQ', 'RPB', 'FDD', 'CLQ', 'NIR',
-            'DAH', 'TEE', 'BFK', 'MAX', 'PRO', 'PRV', 'HKH', 'REN', 'IOB', 'LMR', 'JIF', 'KAP', 'REW', 'MYL',
-            'SPY', 'NMS', 'NBC', 'FHH', 'SPB', 'NYK', 'GSB', 'FBD', 'G', 'DSP', 'VEN', 'RDT', 'JHB', 'TDS',
-            'BHN', 'FRD', 'PIP', 'JSL', 'DLA', 'GOK', 'RPG', 'NUA', 'GBS', 'CSU', 'SCL', 'SMP', 'BSI', 'BGS',
-            'RAM', 'SLS', 'PGR', 'SNI', 'LRL', 'HOP', 'ZIP', 'PFY', 'ECS', 'LIV', 'DSL', 'LFS', 'EMS', 'KAL',
-            'LHL', 'DAM', 'ABF', 'CRD', 'NME', 'MOG'
+            'SDL', 'SDB', 'SRT', 'SRS', 'KTH', 'OIP', 'GLA', 'FMB', 'ROP', 'PFP', 'CIQ', 'ABE', 'SDI', 'FCY', 'NKF', 'NYK', 'NAP', 'EMC', 'NBC', 'NMS', 'FHH', 'NMP', 'FKA', 'CDM', 'NMB', 'NMA', 'CMD', 'CMA', 'VEH', 'VEB', 'MJH', 'VEL', 'VEN', 'GSB', 'KAL', 'FBD', 'GSL', 'HSW', 'GSD', 'FLS', 'FLN', 'BRP', 'TMG', 'PSP', 'GOK', 'GKP', 'GKS', 'GKA', 'GKM', 'ILS', 'ILQ', 'AIL', 'ILM', 'WML', 'PRO', 'PRV', 'DSP', 'SME', 'SHO', 'SIS', 'SHC', 'SSI', 'CLQ', 'CLS', 'CQN', 'RPB', 'RDD', 'RAP', 'RPS', 'ROM', 'MYR', 'MAM', 'SCR', 'AGI', 'HKH', 'EMS', 'MNM', 'MWP', 'BBW', 'BFK', 'FRD', 'PIP', 'POP', 'NIR', 'KAP', 'KND_NDD', 'DSL', 'MAX', 'LMR', 'TEE', 'TTN', 'RDT', 'LIV', 'RPG', 'POW', 'AVH', 'CUL', 'CUL_NDD', 'SNI', 'LFS', 'RAM', 'NUA', 'PLN', 'DLA'
         )
     GROUP BY
         1, 2, 3
@@ -63,13 +57,7 @@ pickup AS (
         ON ext.shipment_received_at_origin_date_key = dim.date_dim_key
     WHERE
         seller_type IN (
-            'SDL', 'OIP', 'GLA', 'FMB', 'ROP', 'CIQ', 'ABE', 'PFP', 'SRS', 'SRT', 'FCY', 'NAP', 'CMD', 'PSP',
-            'TMG', 'FKM', 'FKZ', 'MAM', 'NKF', 'BRP', 'VET', 'WML', 'ILS', 'ILQ', 'RPB', 'FDD', 'CLQ', 'NIR',
-            'DAH', 'TEE', 'BFK', 'MAX', 'PRO', 'PRV', 'HKH', 'REN', 'IOB', 'LMR', 'JIF', 'KAP', 'REW', 'MYL',
-            'SPY', 'NMS', 'NBC', 'FHH', 'SPB', 'NYK', 'GSB', 'FBD', 'G', 'DSP', 'VEN', 'RDT', 'JHB', 'TDS',
-            'BHN', 'FRD', 'PIP', 'JSL', 'DLA', 'GOK', 'RPG', 'NUA', 'GBS', 'CSU', 'SCL', 'SMP', 'BSI', 'BGS',
-            'RAM', 'SLS', 'PGR', 'SNI', 'LRL', 'HOP', 'ZIP', 'PFY', 'ECS', 'LIV', 'DSL', 'LFS', 'EMS', 'KAL',
-            'LHL', 'DAM', 'ABF', 'CRD', 'NME', 'MOG'
+           'SDL', 'SDB', 'SRT', 'SRS', 'KTH', 'OIP', 'GLA', 'FMB', 'ROP', 'PFP', 'CIQ', 'ABE', 'SDI', 'FCY', 'NKF', 'NYK', 'NAP', 'EMC', 'NBC', 'NMS', 'FHH', 'NMP', 'FKA', 'CDM', 'NMB', 'NMA', 'CMD', 'CMA', 'VEH', 'VEB', 'MJH', 'VEL', 'VEN', 'GSB', 'KAL', 'FBD', 'GSL', 'HSW', 'GSD', 'FLS', 'FLN', 'BRP', 'TMG', 'PSP', 'GOK', 'GKP', 'GKS', 'GKA', 'GKM', 'ILS', 'ILQ', 'AIL', 'ILM', 'WML', 'PRO', 'PRV', 'DSP', 'SME', 'SHO', 'SIS', 'SHC', 'SSI', 'CLQ', 'CLS', 'CQN', 'RPB', 'RDD', 'RAP', 'RPS', 'ROM', 'MYR', 'MAM', 'SCR', 'AGI', 'HKH', 'EMS', 'MNM', 'MWP', 'BBW', 'BFK', 'FRD', 'PIP', 'POP', 'NIR', 'KAP', 'KND_NDD', 'DSL', 'MAX', 'LMR', 'TEE', 'TTN', 'RDT', 'LIV', 'RPG', 'POW', 'AVH', 'CUL', 'CUL_NDD', 'SNI', 'LFS', 'RAM', 'NUA', 'PLN', 'DLA'
         )
         AND LOWER(ekl_shipment_type) NOT IN ('rvp')
     GROUP BY
@@ -128,13 +116,7 @@ fac AS (
         ON task.tasklist_created_date_key = dim.date_dim_key
     WHERE
         seller_type IN (
-            'SDL', 'OIP', 'GLA', 'FMB', 'ROP', 'CIQ', 'ABE', 'PFP', 'SRS', 'SRT', 'FCY', 'NAP', 'CMD', 'PSP',
-            'TMG', 'FKM', 'FKZ', 'MAM', 'NKF', 'BRP', 'VET', 'WML', 'ILS', 'ILQ', 'RPB', 'FDD', 'CLQ', 'NIR',
-            'DAH', 'TEE', 'BFK', 'MAX', 'PRO', 'PRV', 'HKH', 'REN', 'IOB', 'LMR', 'JIF', 'KAP', 'REW', 'MYL',
-            'SPY', 'NMS', 'NBC', 'FHH', 'SPB', 'NYK', 'GSB', 'FBD', 'G', 'DSP', 'VEN', 'RDT', 'JHB', 'TDS',
-            'BHN', 'FRD', 'PIP', 'JSL', 'DLA', 'GOK', 'RPG', 'NUA', 'GBS', 'CSU', 'SCL', 'SMP', 'BSI', 'BGS',
-            'RAM', 'SLS', 'PGR', 'SNI', 'LRL', 'HOP', 'ZIP', 'PFY', 'ECS', 'LIV', 'DSL', 'LFS', 'EMS', 'KAL',
-            'LHL', 'DAM', 'ABF', 'CRD', 'NME', 'MOG'
+           'SDL', 'SDB', 'SRT', 'SRS', 'KTH', 'OIP', 'GLA', 'FMB', 'ROP', 'PFP', 'CIQ', 'ABE', 'SDI', 'FCY', 'NKF', 'NYK', 'NAP', 'EMC', 'NBC', 'NMS', 'FHH', 'NMP', 'FKA', 'CDM', 'NMB', 'NMA', 'CMD', 'CMA', 'VEH', 'VEB', 'MJH', 'VEL', 'VEN', 'GSB', 'KAL', 'FBD', 'GSL', 'HSW', 'GSD', 'FLS', 'FLN', 'BRP', 'TMG', 'PSP', 'GOK', 'GKP', 'GKS', 'GKA', 'GKM', 'ILS', 'ILQ', 'AIL', 'ILM', 'WML', 'PRO', 'PRV', 'DSP', 'SME', 'SHO', 'SIS', 'SHC', 'SSI', 'CLQ', 'CLS', 'CQN', 'RPB', 'RDD', 'RAP', 'RPS', 'ROM', 'MYR', 'MAM', 'SCR', 'AGI', 'HKH', 'EMS', 'MNM', 'MWP', 'BBW', 'BFK', 'FRD', 'PIP', 'POP', 'NIR', 'KAP', 'KND_NDD', 'DSL', 'MAX', 'LMR', 'TEE', 'TTN', 'RDT', 'LIV', 'RPG', 'POW', 'AVH', 'CUL', 'CUL_NDD', 'SNI', 'LFS', 'RAM', 'NUA', 'PLN', 'DLA'
         )
         AND LOWER(facility_type) NOT IN ('large')
     GROUP BY
@@ -162,13 +144,7 @@ ofd AS (
         ON ext.fsd_first_dh_received_date_key = dim.date_dim_key
     WHERE
         seller_type IN (
-            'SDL', 'OIP', 'GLA', 'FMB', 'ROP', 'CIQ', 'ABE', 'PFP', 'SRS', 'SRT', 'FCY', 'NAP', 'CMD', 'PSP',
-            'TMG', 'FKM', 'FKZ', 'MAM', 'NKF', 'BRP', 'VET', 'WML', 'ILS', 'ILQ', 'RPB', 'FDD', 'CLQ', 'NIR',
-            'DAH', 'TEE', 'BFK', 'MAX', 'PRO', 'PRV', 'HKH', 'REN', 'IOB', 'LMR', 'JIF', 'KAP', 'REW', 'MYL',
-            'SPY', 'NMS', 'NBC', 'FHH', 'SPB', 'NYK', 'GSB', 'FBD', 'G', 'DSP', 'VEN', 'RDT', 'JHB', 'TDS',
-            'BHN', 'FRD', 'PIP', 'JSL', 'DLA', 'GOK', 'RPG', 'NUA', 'GBS', 'CSU', 'SCL', 'SMP', 'BSI', 'BGS',
-            'RAM', 'SLS', 'PGR', 'SNI', 'LRL', 'HOP', 'ZIP', 'PFY', 'ECS', 'LIV', 'DSL', 'LFS', 'EMS', 'KAL',
-            'LHL', 'DAM', 'ABF', 'CRD', 'NME', 'MOG'
+            'SDL', 'SDB', 'SRT', 'SRS', 'KTH', 'OIP', 'GLA', 'FMB', 'ROP', 'PFP', 'CIQ', 'ABE', 'SDI', 'FCY', 'NKF', 'NYK', 'NAP', 'EMC', 'NBC', 'NMS', 'FHH', 'NMP', 'FKA', 'CDM', 'NMB', 'NMA', 'CMD', 'CMA', 'VEH', 'VEB', 'MJH', 'VEL', 'VEN', 'GSB', 'KAL', 'FBD', 'GSL', 'HSW', 'GSD', 'FLS', 'FLN', 'BRP', 'TMG', 'PSP', 'GOK', 'GKP', 'GKS', 'GKA', 'GKM', 'ILS', 'ILQ', 'AIL', 'ILM', 'WML', 'PRO', 'PRV', 'DSP', 'SME', 'SHO', 'SIS', 'SHC', 'SSI', 'CLQ', 'CLS', 'CQN', 'RPB', 'RDD', 'RAP', 'RPS', 'ROM', 'MYR', 'MAM', 'SCR', 'AGI', 'HKH', 'EMS', 'MNM', 'MWP', 'BBW', 'BFK', 'FRD', 'PIP', 'POP', 'NIR', 'KAP', 'KND_NDD', 'DSL', 'MAX', 'LMR', 'TEE', 'TTN', 'RDT', 'LIV', 'RPG', 'POW', 'AVH', 'CUL', 'CUL_NDD', 'SNI', 'LFS', 'RAM', 'NUA', 'PLN', 'DLA'
         )
     GROUP BY
         1, 2, 3
@@ -207,13 +183,7 @@ breach AS (
         ON CAST(FORMAT_DATE('%Y%m%d', DATE(ext.shipped_lpd)) AS INT64) = dim.date_dim_key
     WHERE
         seller_type IN (
-            'SDL', 'OIP', 'GLA', 'FMB', 'ROP', 'CIQ', 'ABE', 'PFP', 'SRS', 'SRT', 'FCY', 'NAP', 'CMD', 'PSP',
-            'TMG', 'FKM', 'FKZ', 'MAM', 'NKF', 'BRP', 'VET', 'WML', 'ILS', 'ILQ', 'RPB', 'FDD', 'CLQ', 'NIR',
-            'DAH', 'TEE', 'BFK', 'MAX', 'PRO', 'PRV', 'HKH', 'REN', 'IOB', 'LMR', 'JIF', 'KAP', 'REW', 'MYL',
-            'SPY', 'NMS', 'NBC', 'FHH', 'SPB', 'NYK', 'GSB', 'FBD', 'G', 'DSP', 'VEN', 'RDT', 'JHB', 'TDS',
-            'BHN', 'FRD', 'PIP', 'JSL', 'DLA', 'GOK', 'RPG', 'NUA', 'GBS', 'CSU', 'SCL', 'SMP', 'BSI', 'BGS',
-            'RAM', 'SLS', 'PGR', 'SNI', 'LRL', 'HOP', 'ZIP', 'PFY', 'ECS', 'LIV', 'DSL', 'LFS', 'EMS', 'KAL',
-            'LHL', 'DAM', 'ABF', 'CRD', 'NME', 'MOG'
+            'SDL', 'SDB', 'SRT', 'SRS', 'KTH', 'OIP', 'GLA', 'FMB', 'ROP', 'PFP', 'CIQ', 'ABE', 'SDI', 'FCY', 'NKF', 'NYK', 'NAP', 'EMC', 'NBC', 'NMS', 'FHH', 'NMP', 'FKA', 'CDM', 'NMB', 'NMA', 'CMD', 'CMA', 'VEH', 'VEB', 'MJH', 'VEL', 'VEN', 'GSB', 'KAL', 'FBD', 'GSL', 'HSW', 'GSD', 'FLS', 'FLN', 'BRP', 'TMG', 'PSP', 'GOK', 'GKP', 'GKS', 'GKA', 'GKM', 'ILS', 'ILQ', 'AIL', 'ILM', 'WML', 'PRO', 'PRV', 'DSP', 'SME', 'SHO', 'SIS', 'SHC', 'SSI', 'CLQ', 'CLS', 'CQN', 'RPB', 'RDD', 'RAP', 'RPS', 'ROM', 'MYR', 'MAM', 'SCR', 'AGI', 'HKH', 'EMS', 'MNM', 'MWP', 'BBW', 'BFK', 'FRD', 'PIP', 'POP', 'NIR', 'KAP', 'KND_NDD', 'DSL', 'MAX', 'LMR', 'TEE', 'TTN', 'RDT', 'LIV', 'RPG', 'POW', 'AVH', 'CUL', 'CUL_NDD', 'SNI', 'LFS', 'RAM', 'NUA', 'PLN', 'DLA'
         )
     GROUP BY
         1, 2, 3

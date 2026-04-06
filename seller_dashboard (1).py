@@ -549,8 +549,17 @@ def merge_daily_by_client(df):
 # ─────────────────────────────────────────────────────────────────────────────
 # DATA LOADING & METRIC HELPERS
 # ─────────────────────────────────────────────────────────────────────────────
-@st.cache_data(ttl=120)
-def load_raw(path: str) -> pd.DataFrame:
+def _metrics_csv_mtime(path: str) -> float:
+    """Bust Streamlit cache when file content changes but path stays the same (e.g. Cloud redeploy)."""
+    try:
+        return Path(path).resolve().stat().st_mtime
+    except OSError:
+        return 0.0
+
+
+@st.cache_data(ttl=300)
+def load_raw(path: str, _file_mtime: float) -> pd.DataFrame:
+    _ = _file_mtime  # cache key only — changes when CSV on disk is replaced/updated
     df = pd.read_csv(path)
     df["payment_type_norm"] = (
         df["payment_type"].str.upper().map({"COD": "COD", "PREPAID": "Prepaid"})
@@ -818,7 +827,7 @@ with st.sidebar:
     st.markdown("### Global Filters")
 
 try:
-    raw_df = load_raw(data_path)
+    raw_df = load_raw(data_path, _metrics_csv_mtime(data_path))
 except FileNotFoundError:
 
     _hint = " Update the path in the sidebar." if IS_ADMIN else ""
