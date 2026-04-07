@@ -47,7 +47,7 @@ _METRICS_CSV_NAME = "cd5a0d281d2bef0117eaeb0bffae3932.csv"
 
 def _resolve_default_metrics_csv() -> Path:
     """Prefer data/ (common in repo layout); fall back to same directory as this script."""
-    data_p = ROOT_DIR / "data" / _METRICS_CSV_NAME
+    data_p = ROOT_DIR / _METRICS_CSV_NAME
     root_p = ROOT_DIR / _METRICS_CSV_NAME
     if data_p.is_file():
         return data_p
