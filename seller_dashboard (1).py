@@ -17,10 +17,14 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import hmac
+import hashlib
 import json
 import re
+import time
+import base64
 from pathlib import Path
 from datetime import datetime, timedelta
+import streamlit.components.v1 as _components
 
 
 import streamlit as st
@@ -141,16 +145,100 @@ def _attempt_login(email: str, password: str) -> tuple[bool, str, str, str | Non
     return False, "", "Invalid email or password.", None
 
 
-if "authenticated" not in st.session_state:
-    st.session_state.authenticated = False
-if "auth_email" not in st.session_state:
-    st.session_state.auth_email = ""
-if "auth_role" not in st.session_state:
-    st.session_state.auth_role = ""
-if "auth_zone" not in st.session_state:
-    st.session_state.auth_zone = None
+# ─────────────────────────────────────────────────────────────────────────────
+# COOKIE-BASED SESSION PERSISTENCE
+# ─────────────────────────────────────────────────────────────────────────────
+_COOKIE_NAME = "seller_dash_session"
+_COOKIE_MAX_AGE = 86400 * 7  # 7 days
+
+
+def _get_cookie_secret() -> str:
+    cfg = _dashboard_auth_cfg()
+    admin_pwd = str(cfg.get("admin_password", "") or "fallback-key")
+    return hashlib.sha256(f"seller-dash-{admin_pwd}".encode()).hexdigest()
+
+
+def _sign_session(email: str, role: str, zone: str | None) -> str:
+    secret = _get_cookie_secret()
+    expiry = int(time.time()) + _COOKIE_MAX_AGE
+    payload = json.dumps({"email": email, "role": role, "zone": zone, "exp": expiry})
+    payload_b64 = base64.urlsafe_b64encode(payload.encode()).decode()
+    sig = hmac.new(secret.encode(), payload_b64.encode(), hashlib.sha256).hexdigest()
+    return f"{payload_b64}.{sig}"
+
+
+def _verify_session(token: str) -> dict | None:
+    try:
+        secret = _get_cookie_secret()
+        parts = token.split(".", 1)
+        if len(parts) != 2:
+            return None
+        payload_b64, sig = parts
+        expected = hmac.new(secret.encode(), payload_b64.encode(), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(sig, expected):
+            return None
+        payload = json.loads(base64.urlsafe_b64decode(payload_b64))
+        if payload.get("exp", 0) < time.time():
+            return None
+        return payload
+    except Exception:
+        return None
+
+
+def _read_session_cookie() -> dict | None:
+    try:
+        token = st.context.cookies.get(_COOKIE_NAME)
+        if not token:
+            return None
+        return _verify_session(token)
+    except Exception:
+        return None
+
+
+def _set_session_cookie(email: str, role: str, zone: str | None) -> None:
+    token = _sign_session(email, role, zone)
+    _components.html(
+        f"<script>document.cookie='{_COOKIE_NAME}={token};path=/;max-age={_COOKIE_MAX_AGE};SameSite=Lax';</script>",
+        height=0,
+    )
+
+
+def _clear_session_cookie() -> None:
+    _components.html(
+        f"<script>document.cookie='{_COOKIE_NAME}=;path=/;max-age=0;SameSite=Lax';</script>",
+        height=0,
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SESSION INITIALIZATION (restore from cookie on fresh page load)
+# ─────────────────────────────────────────────────────────────────────────────
+if "_session_initialized" not in st.session_state:
+    st.session_state._session_initialized = True
+    session = _read_session_cookie()
+    if session:
+        st.session_state.authenticated = True
+        st.session_state.auth_email = session.get("email", "")
+        st.session_state.auth_role = session.get("role", "")
+        st.session_state.auth_zone = session.get("zone")
+    else:
+        st.session_state.authenticated = False
+        st.session_state.auth_email = ""
+        st.session_state.auth_role = ""
+        st.session_state.auth_zone = None
+else:
+    if "authenticated" not in st.session_state:
+        st.session_state.authenticated = False
+    if "auth_email" not in st.session_state:
+        st.session_state.auth_email = ""
+    if "auth_role" not in st.session_state:
+        st.session_state.auth_role = ""
+    if "auth_zone" not in st.session_state:
+        st.session_state.auth_zone = None
 
 if not st.session_state.authenticated:
+    if st.session_state.pop("_needs_cookie_clear", False):
+        _clear_session_cookie()
     st.title("Seller Dashboard — Sign in")
     cfg = _dashboard_auth_cfg()
     if not cfg.get("admin_password") and not _viewer_accounts():
@@ -169,12 +257,24 @@ if not st.session_state.authenticated:
             st.session_state.auth_email = _norm_email(le)
             st.session_state.auth_role = role
             st.session_state.auth_zone = zone
+            st.session_state._needs_cookie_set = True
             st.rerun()
         elif msg:
             st.error(msg)
     st.stop()
 
 IS_ADMIN = st.session_state.auth_role == "admin"
+
+# Deferred cookie write: runs on the dashboard page where no st.rerun() will kill the iframe
+if st.session_state.pop("_needs_cookie_set", False):
+    _set_session_cookie(
+        st.session_state.auth_email,
+        st.session_state.auth_role,
+        st.session_state.auth_zone,
+    )
+
+if st.session_state.pop("_needs_cookie_clear", False):
+    _clear_session_cookie()
 
 
 st.markdown("""
@@ -709,7 +809,7 @@ def _aggregate_by_period(daily_df: pd.DataFrame, period_type: str) -> pd.DataFra
 
 
 def fmt_date(s: str) -> str:
-    return f"{s[4:6]}/{s[6:8]}" if len(s) == 8 else s
+    return f"{s[6:8]}-{s[4:6]}-{s[:4]}" if len(s) == 8 else s
 
 
 # ── Vectorized table colour helpers (np.select operates on entire columns) ──
@@ -765,8 +865,11 @@ with st.sidebar:
     role_label = "Admin" if IS_ADMIN else f"Viewer ({st.session_state.auth_zone or '—'})"
     st.caption(f"**{st.session_state.auth_email}** · {role_label}")
     if st.button("Log out", use_container_width=True, key="logout_btn"):
-        for _k in ("authenticated", "auth_email", "auth_role", "auth_zone"):
-            st.session_state.pop(_k, None)
+        st.session_state.authenticated = False
+        st.session_state.auth_email = ""
+        st.session_state.auth_role = ""
+        st.session_state.auth_zone = None
+        st.session_state._needs_cookie_clear = True
         st.rerun()
     st.divider()
     if IS_ADMIN:
@@ -1119,7 +1222,7 @@ if page == "📊 Overall Metric":
             d_r = d_r.fillna(0)
 
             d_r = d_r[d_r["PHin"] >= min_vol]
-            d_r["Date"] = d_r["reporting_date"].str[4:6] + "/" + d_r["reporting_date"].str[6:8]
+            d_r["Date"] = d_r["reporting_date"].str[6:8] + "-" + d_r["reporting_date"].str[4:6] + "-" + d_r["reporting_date"].str[:4]
 
             daily_breach_display = d_r[[
                 "Date", "seller_type", "Breach %", "FAC %",
