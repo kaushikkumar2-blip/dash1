@@ -988,6 +988,17 @@ def _get_thresh(metric: str) -> float:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# QUICK LINKS
+# ─────────────────────────────────────────────────────────────────────────────
+st.markdown(
+    '<div style="display:flex;gap:24px;margin-bottom:12px;">'
+    '<a href="https://example.com/link1" target="_blank" style="color:#1D4ED8;font-weight:500;text-decoration:none;">🔗 Link 1 — Edit Me</a>'
+    '<a href="https://example.com/link2" target="_blank" style="color:#1D4ED8;font-weight:500;text-decoration:none;">🔗 Link 2 — Edit Me</a>'
+    '</div>',
+    unsafe_allow_html=True,
+)
+
+# ─────────────────────────────────────────────────────────────────────────────
 # PAGE NAVIGATION (data built lazily per page to avoid redundant computation)
 # ─────────────────────────────────────────────────────────────────────────────
 page = st.radio(
