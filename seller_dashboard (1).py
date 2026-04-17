@@ -36,7 +36,7 @@ from datetime import datetime, timedelta
 # PAGE CONFIG
 # ─────────────────────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="Seller Breach Performance",
+    page_title="Seller Performance",
     page_icon="📦",
     layout="wide",
     initial_sidebar_state="expanded",
