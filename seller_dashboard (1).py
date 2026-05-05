@@ -1139,7 +1139,7 @@ if page == "📊 Overall Metric":
     ]
     _dw_opt_to_seller = dict(zip(_dw_options, _dw_all_sellers))
 
-    _dw_fc1, _dw_fc2 = st.columns(2)
+    _dw_fc1, _dw_fc2, _dw_fc3 = st.columns([2, 2, 1.2])
     with _dw_fc1:
         try:
             _dw_all_dates = sorted(date_filtered_df["reporting_date"].unique())
@@ -1162,11 +1162,18 @@ if page == "📊 Overall Metric":
             key="dw_seller_select",
             placeholder="Choose one or more sellers…",
         )
+    with _dw_fc3:
+        _dw_granularity = st.radio(
+            "View by",
+            ["Daily", "Weekly", "Monthly"],
+            horizontal=False,
+            key="dw_granularity",
+        )
 
     _dw_selected_sellers = [_dw_opt_to_seller[o] for o in _dw_selected_opts]
 
     if not _dw_selected_sellers:
-        st.info("Select at least one seller above to load the day-wise report.")
+        st.info("Select at least one seller above to load the report.")
     else:
         _dw_start_str = _dw_start.strftime("%Y%m%d")
         _dw_end_str = _dw_end.strftime("%Y%m%d")
@@ -1179,6 +1186,7 @@ if page == "📊 Overall Metric":
         if daily_breach_df.empty:
             st.warning("No data for the selected date range and sellers.")
         else:
+            daily_breach_df = daily_breach_df.copy()
             daily_breach_df["_client_grp"] = daily_breach_df["seller_type"].str.upper().map(CLIENT_MAP).fillna(daily_breach_df["seller_type"])
 
             _code_lookup = (
@@ -1187,7 +1195,19 @@ if page == "📊 Overall Metric":
                 .to_dict()
             )
 
-            agg_daily = daily_breach_df.groupby(["reporting_date", "_client_grp"]).agg(
+            _dw_period_dt = pd.to_datetime(daily_breach_df["reporting_date"], format="%Y%m%d", errors="coerce")
+            if _dw_granularity == "Weekly":
+                _period_keys = _dw_period_dt.dt.strftime("%G-W%V")
+                _period_label_col = "Week"
+            elif _dw_granularity == "Monthly":
+                _period_keys = _dw_period_dt.dt.strftime("%Y-%m")
+                _period_label_col = "Month"
+            else:
+                _period_keys = daily_breach_df["reporting_date"]
+                _period_label_col = "Date"
+            daily_breach_df["_period"] = _period_keys.values
+
+            agg_daily = daily_breach_df.groupby(["_period", "_client_grp"]).agg(
                 PHin=("PHin", "sum"),
                 conv_num=("conv_num", "sum"),
                 First_attempt_delivered=("First_attempt_delivered", "sum"),
@@ -1201,21 +1221,21 @@ if page == "📊 Overall Metric":
 
             cod_daily = (
                 daily_breach_df[daily_breach_df["payment_type_norm"] == "COD"]
-                .groupby(["reporting_date", "_client_grp"])
+                .groupby(["_period", "_client_grp"])
                 .agg(cod_vol=("PHin", "sum"), cod_conv=("conv_num", "sum"))
                 .reset_index()
             )
             pp_daily = (
                 daily_breach_df[daily_breach_df["payment_type_norm"] == "Prepaid"]
-                .groupby(["reporting_date", "_client_grp"])
+                .groupby(["_period", "_client_grp"])
                 .agg(pp_vol=("PHin", "sum"), pp_conv=("conv_num", "sum"))
                 .reset_index()
             )
 
             d_r = (
                 agg_daily
-                .merge(cod_daily, on=["reporting_date", "_client_grp"], how="left")
-                .merge(pp_daily, on=["reporting_date", "_client_grp"], how="left")
+                .merge(cod_daily, on=["_period", "_client_grp"], how="left")
+                .merge(pp_daily, on=["_period", "_client_grp"], how="left")
                 .fillna(0)
             )
             d_r["seller_type"] = d_r["_client_grp"].map(_code_lookup)
@@ -1233,23 +1253,34 @@ if page == "📊 Overall Metric":
             d_r = d_r.fillna(0)
 
             d_r = d_r[d_r["PHin"] >= min_vol]
-            d_r["Date"] = d_r["reporting_date"].str[6:8] + "-" + d_r["reporting_date"].str[4:6] + "-" + d_r["reporting_date"].str[:4]
+
+            if _dw_granularity == "Daily":
+                d_r[_period_label_col] = (
+                    d_r["_period"].str[6:8] + "-" + d_r["_period"].str[4:6] + "-" + d_r["_period"].str[:4]
+                )
+            elif _dw_granularity == "Monthly":
+                _month_dt = pd.to_datetime(d_r["_period"] + "-01", format="%Y-%m-%d", errors="coerce")
+                d_r[_period_label_col] = _month_dt.dt.strftime("%b %Y")
+            else:
+                d_r[_period_label_col] = d_r["_period"]
 
             daily_breach_display = d_r[[
-                "Date", "seller_type", "Breach %", "FAC %",
+                _period_label_col, "seller_type", "Breach %", "FAC %",
                 "PHin", "ZRTO %", "FM Picked %",
                 "Overall Conversion %", "COD Conversion %", "Prepaid Conversion %",
-                "COD Share %", "Prepaid Share %",
+                "COD Share %", "Prepaid Share %", "_period",
             ]].rename(columns={
                 "seller_type": "Seller",
                 "PHin": "Volume",
-            }).sort_values(["Date", "Seller"])
+            }).sort_values(["_period", "Seller"]).drop(columns=["_period"])
             daily_breach_display = add_client_col(daily_breach_display)
 
+            _gran_word = {"Daily": "day", "Weekly": "week", "Monthly": "month"}[_dw_granularity]
             st.markdown(
                 f"<div style='font-size:0.82rem;color:#64748B;margin-bottom:8px;'>"
                 f"Showing <b>{len(daily_breach_display)}</b> rows · "
                 f"<b>{len(_dw_selected_sellers)}</b> sellers · "
+                f"grouped by <b>{_gran_word}</b> · "
                 f"{_dw_start} to {_dw_end}</div>",
                 unsafe_allow_html=True,
             )
