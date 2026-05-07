@@ -10,18 +10,20 @@ cd /d "%~dp0"
 REM Create logs directory
 if not exist "logs" mkdir logs
 
-REM Load credentials from .env file
-for /f "usebackq tokens=1,* delims==" %%a in (".env") do (
-    set "%%a=%%b"
+REM Load credentials from .env file (skip blank lines and comments)
+for /f "usebackq eol=# tokens=1,* delims==" %%a in (".env") do (
+    if not "%%a"=="" set "%%a=%%b"
 )
 
-REM Get date for log filename (YYYY-MM-DD)
-for /f "tokens=2 delims==" %%I in ('wmic os get localdatetime /format:list') do set datetime=%%I
-set LOGDATE=%datetime:~0,4%-%datetime:~4,2%-%datetime:~6,2%
+REM Get date for log filename (YYYY-MM-DD) via PowerShell (wmic is removed on newer Windows)
+for /f "usebackq delims=" %%I in (`powershell -NoProfile -Command "Get-Date -Format yyyy-MM-dd"`) do set "LOGDATE=%%I"
+if "%LOGDATE%"=="" set "LOGDATE=%date:~-4%-%date:~3,2%-%date:~0,2%"
 
 echo [%LOGDATE% %time%] Starting scraper run... >> logs\run_log.txt
 
 REM Run the scraper
 .venv\Scripts\python.exe scraper.py >> "logs\run_%LOGDATE%.log" 2>&1
+set "EXITCODE=%ERRORLEVEL%"
 
-echo [%LOGDATE% %time%] Scraper run completed (exit code: %ERRORLEVEL%) >> logs\run_log.txt
+echo [%LOGDATE% %time%] Scraper run completed (exit code: %EXITCODE%) >> logs\run_log.txt
+exit /b %EXITCODE%

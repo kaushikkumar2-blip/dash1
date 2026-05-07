@@ -27,7 +27,7 @@ api:
   queue_name: "fulfillment_adhoc"
   workload_type: "Default"
   execution_mode: "Regular"
-  max_wait_seconds: 600
+  max_wait_seconds: 900
   poll_interval_seconds: 10
 
 # ---------------------------------------------------------------------------
